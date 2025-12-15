@@ -18,17 +18,18 @@
   align-items: center;
   gap: 6px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  transition: all 0.2s ease;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  user-select: none;
 }
 
 #chatgpt-nav-toggle:hover {
   background: #0d8c6d;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 #chatgpt-nav-toggle:active {
-  transform: translateY(0);
+  transform: scale(0.98);
 }
 
 #chatgpt-nav-toggle svg {
@@ -43,6 +44,19 @@
   font-size: 11px;
   margin-left: 2px;
   font-weight: 600;
+}
+
+.chatgpt-nav-button-drag {
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.8;
+  margin-right: -4px;
+  cursor: move;
+  padding: 2px;
+}
+
+.chatgpt-nav-button-drag:active {
+  cursor: grabbing;
 }
 
 /* Dropdown Container */
@@ -145,11 +159,74 @@
   }
 }
 
+/* Search Box */
+.chatgpt-nav-search {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: white;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chatgpt-nav-search {
+    background: #202123;
+    border-bottom: 1px solid #3e3f4b;
+  }
+}
+
+#chatgpt-nav-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+#chatgpt-nav-search-input:focus {
+  border-color: #10a37f;
+}
+
+@media (prefers-color-scheme: dark) {
+  #chatgpt-nav-search-input {
+    background: #2a2b32;
+    border-color: #3e3f4b;
+    color: #ececf1;
+  }
+  
+  #chatgpt-nav-search-input:focus {
+    border-color: #10a37f;
+  }
+}
+
 /* Messages List */
 .chatgpt-nav-list {
   overflow-y: auto;
   flex: 1;
   padding: 10px;
+  position: relative;
+}
+
+.chatgpt-nav-star {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.chatgpt-nav-star:hover {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
+.chatgpt-nav-item:hover .chatgpt-nav-star {
+  opacity: 1;
 }
 
 .chatgpt-nav-list::-webkit-scrollbar {
@@ -243,13 +320,66 @@
 
 /* Empty State */
 .chatgpt-nav-empty {
-  padding: 30px 20px;
   text-align: center;
+  padding: 24px 16px;
   color: #9ca3af;
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.chatgpt-nav-empty-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+}
+
+.chatgpt-nav-empty h4 {
+  color: #374151;
+  font-size: 16px;
+  margin: 0 0 6px 0;
+  font-weight: 600;
+}
+
+.chatgpt-nav-empty p {
   font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+  color: #9ca3af;
+}
+
+.chatgpt-nav-empty-hint {
+  margin-top: 14px;
+  font-size: 12px;
+  opacity: 0.8;
+  color: #9ca3af;
+}
+
+.chatgpt-nav-empty-hint b {
+  color: #10a37f;
+  font-weight: 600;
 }
 
 @media (prefers-color-scheme: dark) {
+  .chatgpt-nav-empty h4 {
+    color: #e5e7eb;
+  }
+  
+  .chatgpt-nav-empty p {
+    color: #9ca3af;
+  }
+  
+  .chatgpt-nav-empty-hint {
+    color: #9ca3af;
+  }
+  
+  .chatgpt-nav-empty-hint b {
+    color: #19c37d;
+  }
+}
+
+media (prefers-color-scheme: dark) {
   .chatgpt-nav-empty {
     color: #6b7280;
   }
