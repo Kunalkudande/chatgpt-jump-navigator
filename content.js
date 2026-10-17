@@ -1,447 +1,430 @@
-// ChatGPT Navigation Dropdown Extension
-class ChatGPTNavigator {
-  constructor() {
-    this.userMessages = [];
-    this.dropdown = null;
-    this.toggleButton = null;
-    this.isOpen = false;
-    this.observer = null;
-    this.starredMessages = this.loadStarredMessages();
-    this.buttonPosition = this.loadButtonPosition();
-    this.isDragging = false;
-    this.dragOffset = { x: 0, y: 0 };
-    
-    this.init();
-  }
+// Isolated content script: no conversation text leaves this tab.
+(() => {
+  'use strict';
+  if (!['chatgpt.com', 'chat.openai.com'].includes(location.hostname)) return;
+  window.chatGPTNavigatorInstance?.destroy?.();
+  const ROOT = 'chatgpt-jump-navigator';
+  const SELECTOR = '[data-message-author-role="user"]';
+  const STORAGE = 'jumpNavigatorV3';
+  const STAR_PREFIX = 'jumpNavigatorStar:';
+  const clamp = (value, min, max) => Math.max(min, Math.min(value, Math.max(min, max)));
+  const hash = (text) => {
+    let value = 2166136261;
+    for (let i = 0; i < text.length; i++) value = Math.imul(value ^ text.charCodeAt(i), 16777619);
+    return (value >>> 0).toString(36);
+  };
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
 
-  init() {
-    // Wait for ChatGPT to load
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => this.setup());
-    } else {
-      this.setup();
+  class ChatGPTNavigator {
+    constructor() {
+      this.events = new AbortController();
+      this.messages = [];
+      this.stars = new Set();
+      this.query = '';
+      this.onlyStarred = false;
+      this.newestFirst = false;
+      this.isOpen = false;
+      this.conversation = this.conversationKey();
+      this.position = null;
+      this.saveQueue = Promise.resolve();
+      this.ready = this.init();
     }
-  }
-
-  setup() {
-    this.createUI();
-    this.startObserving();
-    this.scanExistingMessages();
-    this.setupKeyboardShortcuts();
-  }
-
-  createUI() {
-    // Create toggle button
-    this.toggleButton = document.createElement('button');
-    this.toggleButton.id = 'chatgpt-nav-toggle';
-    this.toggleButton.innerHTML = `
-      <span class="chatgpt-nav-button-drag">⋮⋮</span>
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-        <path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-      <span>Messages</span>
-    `;
-    this.toggleButton.addEventListener('click', (e) => {
-      if (!this.isDragging) {
-        this.toggleDropdown();
-      }
-    });
-    
-    // Make button draggable
-    this.makeButtonDraggable();
-    
-    // Restore button position
-    if (this.buttonPosition) {
-      this.toggleButton.style.top = this.buttonPosition.top + 'px';
-      this.toggleButton.style.left = this.buttonPosition.left + 'px';
-      this.toggleButton.style.right = 'auto';
+    listen(node, event, handler, options = {}) {
+      node.addEventListener(event, handler, { ...options, signal: this.events.signal });
     }
+    conversationKey() { return location.pathname.replace(/\/$/, '') || '/'; }
 
-    // Create dropdown container
-    this.dropdown = document.createElement('div');
-    this.dropdown.id = 'chatgpt-nav-dropdown';
-    this.dropdown.className = 'chatgpt-nav-hidden';
-
-    // Create dropdown header
-    const header = document.createElement('div');
-    header.className = 'chatgpt-nav-header';
-    header.innerHTML = `
-      <h3>Your Messages</h3>
-      <button id="chatgpt-nav-close">×</button>
-    `;
-    header.querySelector('#chatgpt-nav-close').addEventListener('click', () => this.toggleDropdown());
-
-    // Create search box
-    const searchContainer = document.createElement('div');
-    searchContainer.className = 'chatgpt-nav-search';
-    searchContainer.innerHTML = `
-      <input type="text" id="chatgpt-nav-search-input" placeholder="Search messages..." />
-    `;
-    searchContainer.querySelector('#chatgpt-nav-search-input').addEventListener('input', (e) => this.filterMessages(e.target.value));
-
-    // Create messages list
-    const messagesList = document.createElement('div');
-    messagesList.id = 'chatgpt-nav-list';
-    messagesList.className = 'chatgpt-nav-list';
-
-    this.dropdown.appendChild(header);
-    this.dropdown.appendChild(searchContainer);
-    this.dropdown.appendChild(messagesList);
-    
-    // Set initial position if saved, otherwise use default top-right
-    // Actual positioning happens when dropdown opens
-
-    // Add to page
-    document.body.appendChild(this.toggleButton);
-    document.body.appendChild(this.dropdown);
-  }
-
-  toggleDropdown() {
-    this.isOpen = !this.isOpen;
-    if (this.isOpen) {
-      // Scan messages fresh every time dropdown opens
-      this.scanExistingMessages();
-      // Position dropdown relative to button
-      this.positionDropdownNearButton();
-      this.dropdown.classList.remove('chatgpt-nav-hidden');
-      this.dropdown.classList.add('chatgpt-nav-visible');
-      this.updateMessagesList();
-    } else {
-      this.dropdown.classList.remove('chatgpt-nav-visible');
-      this.dropdown.classList.add('chatgpt-nav-hidden');
-    }
-  }
-
-  positionDropdownNearButton() {
-    const buttonRect = this.toggleButton.getBoundingClientRect();
-    
-    // Position dropdown below and aligned with button
-    const dropdownTop = buttonRect.bottom + 5;
-    const dropdownRight = window.innerWidth - buttonRect.right;
-    
-    this.dropdown.style.top = dropdownTop + 'px';
-    this.dropdown.style.right = dropdownRight + 'px';
-    this.dropdown.style.left = 'auto';
-  }
-
-  startObserving() {
-    // Observe changes to detect new messages
-    this.observer = new MutationObserver((mutations) => {
-      let shouldUpdate = false;
-      
-      for (const mutation of mutations) {
-        if (mutation.addedNodes.length > 0) {
-          shouldUpdate = true;
-          break;
-        }
-      }
-      
-      if (shouldUpdate) {
-        // Debounce updates
-        clearTimeout(this.updateTimeout);
-        this.updateTimeout = setTimeout(() => {
-          this.scanExistingMessages();
-          if (this.isOpen) {
-            this.updateMessagesList();
-          }
-        }, 500);
-      }
-    });
-
-    // Start observing the document
-    const targetNode = document.body;
-    this.observer.observe(targetNode, {
-      childList: true,
-      subtree: true
-    });
-  }
-
-  scanExistingMessages() {
-    const messageElements = document.querySelectorAll(
-      '[data-message-author-role="user"]'
-    );
-
-    this.userMessages = Array.from(messageElements)
-      .map((element, index) => {
-        const text = element.innerText?.trim();
-
-        // Hard filters
-        if (
-          !text ||
-          text.length < 2 ||
-          text.includes('window.__oai_') ||
-          text.startsWith('window.')
-        ) {
-          return null;
-        }
-
-        return {
-          element,
-          text,
-          preview: text.length > 80 ? text.slice(0, 80) + '…' : text,
-          index
-        };
-      })
-      .filter(Boolean);
-
-    this.updateButtonCounter();
-  }
-
-  updateButtonCounter() {
-    const countSpan = this.toggleButton.querySelector('.count');
-    
-    if (this.userMessages.length === 0) {
-      countSpan?.remove();
-      return;
-    }
-
-    if (countSpan) {
-      countSpan.textContent = this.userMessages.length;
-    } else {
-      const span = document.createElement('span');
-      span.className = 'count';
-      span.textContent = this.userMessages.length;
-      this.toggleButton.appendChild(span);
-    }
-  }
-
-  updateMessagesList() {
-    const listContainer = document.getElementById('chatgpt-nav-list');
-    
-    // Don't clear if already populated to prevent flashing
-    const existingCount = listContainer.querySelectorAll('.chatgpt-nav-item').length;
-    if (existingCount === this.userMessages.length) {
-      return; // No new messages, skip update
-    }
-    
-    listContainer.innerHTML = '';
-
-    if (this.userMessages.length === 0) {
-      listContainer.innerHTML = `
-        <div class="chatgpt-nav-empty">
-          <div class="chatgpt-nav-empty-icon">💬</div>
-          <h4>No messages yet</h4>
-          <p>
-            Start chatting with ChatGPT<br />
-            and your questions will appear here for quick navigation.
-          </p>
-          <div class="chatgpt-nav-empty-hint">
-            ⌨️ Tip: Press <b>Ctrl + Shift + M</b> anytime
-          </div>
-        </div>
-      `;
-      return;
-    }
-
-    this.userMessages.forEach((message, index) => {
-      const messageItem = document.createElement('div');
-      messageItem.className = 'chatgpt-nav-item';
-      messageItem.setAttribute('data-message-index', index);
-      
-      // Star button
-      const starButton = document.createElement('button');
-      starButton.className = 'chatgpt-nav-star';
-      const isStarred = this.starredMessages.includes(message.text);
-      starButton.textContent = isStarred ? '⭐' : '☆';
-      starButton.title = isStarred ? 'Unstar message' : 'Star message';
-      starButton.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.toggleStar(message.text, starButton);
+    async init() {
+      this.createUI();
+      this.scan();
+      this.listen(document, 'keydown', (event) => this.onKey(event));
+      this.listen(document, 'pointerdown', (event) => {
+        if (this.isOpen && !this.root.contains(event.target)) this.close(false);
       });
-      
-      const messageNumber = document.createElement('span');
-      messageNumber.className = 'chatgpt-nav-number';
-      messageNumber.textContent = `${index + 1}.`;
-      
-      const messageText = document.createElement('span');
-      messageText.className = 'chatgpt-nav-text';
-      messageText.textContent = message.preview;
-      
-      messageItem.appendChild(starButton);
-      messageItem.appendChild(messageNumber);
-      messageItem.appendChild(messageText);
-      
-      messageItem.addEventListener('click', () => {
-        this.scrollToMessage(message.element);
-        this.toggleDropdown(); // Close dropdown after navigation
+      this.listen(window, 'resize', () => {
+        this.placeButton();
+        this.placePanel();
       });
-      
-      listContainer.appendChild(messageItem);
-    });
-  }
-
-  scrollToMessage(element) {
-    // Scroll to top of message
-    element.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
-    });
-    
-    // Add extra offset to ensure it's at the very top
-    setTimeout(() => {
-      const elementTop = element.getBoundingClientRect().top;
-      window.scrollBy({
-        top: elementTop - 80, // 80px offset from top
-        behavior: 'smooth'
+      this.observer = new MutationObserver((records) => {
+        const relevant = records.some((record) => {
+          if (this.root.contains(record.target)) return false;
+          if (record.target.nodeType === 1 && record.target.closest(SELECTOR)) return true;
+          if (record.target.parentElement?.closest(SELECTOR)) return true;
+          if (record.type === 'attributes' && record.attributeName === 'data-message-author-role') return true;
+          return [...record.addedNodes, ...record.removedNodes].some((node) =>
+            node === this.root || (node.nodeType === 1 &&
+              (node.matches(SELECTOR) || node.querySelector(SELECTOR) || node.contains(this.root))));
+        });
+        if (!relevant && this.conversation === this.conversationKey()) return;
+        // Throttle: assistant streaming cannot starve updates or trigger our own redraws.
+        if (!this.scanTimer) this.scanTimer = setTimeout(() => {
+          this.scanTimer = null;
+          if (!this.root.isConnected) document.body.append(this.root);
+          this.scan();
+        }, 180);
       });
-    }, 100);
-    
-    // Highlight the message briefly
-    element.style.transition = 'background-color 0.3s';
-    const originalBg = element.style.backgroundColor;
-    element.style.backgroundColor = 'rgba(0, 123, 255, 0.1)';
-    
-    setTimeout(() => {
-      element.style.backgroundColor = originalBg;
-    }, 2000);
-  }
-
-
-
-  // Filter messages by search term
-  filterMessages(searchTerm) {
-    const items = document.querySelectorAll('.chatgpt-nav-item');
-    const term = searchTerm.toLowerCase();
-    
-    items.forEach(item => {
-      const text = item.querySelector('.chatgpt-nav-text').textContent.toLowerCase();
-      if (text.includes(term)) {
-        item.style.display = 'flex';
-      } else {
-        item.style.display = 'none';
+      this.observer.observe(document.body, { subtree: true, childList: true, characterData: true,
+        attributes: true, attributeFilter: ['data-message-id', 'data-message-author-role'] });
+      this.routeTimer = setInterval(() => {
+        if (this.conversation !== this.conversationKey()) this.scan();
+      }, 750);
+      try {
+        const all = await chrome.storage.local.get(null);
+        const saved = all[STORAGE];
+        this.stars = new Set(Object.keys(all).filter((key) => key.startsWith(STAR_PREFIX) && all[key] === true).map((key) => key.slice(STAR_PREFIX.length)));
+        if (saved && typeof saved === 'object') {
+          if (Number.isFinite(saved.position?.left) && Number.isFinite(saved.position?.top)) this.position = saved.position;
+          this.newestFirst = saved.newestFirst === true;
+        }
+      } catch {
+        this.notify('Saved settings are unavailable. Changes will last for this tab only.');
       }
-    });
-  }
-
-  // Toggle star on message
-  toggleStar(messageText, button) {
-    const index = this.starredMessages.indexOf(messageText);
-    
-    if (index > -1) {
-      this.starredMessages.splice(index, 1);
-      button.textContent = '☆';
-      button.title = 'Star message';
-    } else {
-      this.starredMessages.push(messageText);
-      button.textContent = '⭐';
-      button.title = 'Unstar message';
-    }
-    
-    this.saveStarredMessages();
-  }
-
-  // Make button draggable
-  makeButtonDraggable() {
-    let dragStartTime = 0;
-    const dragIcon = this.toggleButton.querySelector('.chatgpt-nav-button-drag');
-    
-    dragIcon.addEventListener('mousedown', (e) => {
-      e.stopPropagation(); // Prevent click event on button
-      dragStartTime = Date.now();
-      this.isDragging = false;
-      
-      const rect = this.toggleButton.getBoundingClientRect();
-      this.dragOffset.x = e.clientX - rect.left;
-      this.dragOffset.y = e.clientY - rect.top;
-      
-      const handleMove = (e) => {
-        // If mouse moved, it's a drag
-        if (Date.now() - dragStartTime > 100) {
-          this.isDragging = true;
+      if (this.events.signal.aborted) return;
+      this.storageReady = true;
+      this.storageListener = (changes, area) => {
+        if (area !== 'local') return;
+        let changed = false;
+        for (const [key, change] of Object.entries(changes)) {
+          if (!key.startsWith(STAR_PREFIX)) continue;
+          change.newValue === true ? this.stars.add(key.slice(STAR_PREFIX.length)) : this.stars.delete(key.slice(STAR_PREFIX.length));
+          changed = true;
         }
-        
-        if (this.isDragging) {
-          const x = e.clientX - this.dragOffset.x;
-          const y = e.clientY - this.dragOffset.y;
-          
-          // Keep within viewport bounds
-          const maxX = window.innerWidth - this.toggleButton.offsetWidth;
-          const maxY = window.innerHeight - this.toggleButton.offsetHeight;
-          
-          const boundedX = Math.max(0, Math.min(x, maxX));
-          const boundedY = Math.max(0, Math.min(y, maxY));
-          
-          this.toggleButton.style.left = boundedX + 'px';
-          this.toggleButton.style.top = boundedY + 'px';
-          this.toggleButton.style.right = 'auto';
-          
-          // Move dropdown with button if it's open
-          if (this.isOpen) {
-            this.positionDropdownNearButton();
-          }
-        }
+        if (changed && this.isOpen) this.render();
       };
-      
-      const handleUp = () => {
-        if (this.isDragging) {
-          this.saveButtonPosition();
-        }
-        
-        // Reset dragging after a short delay so click handler doesn't fire
-        setTimeout(() => {
-          this.isDragging = false;
-        }, 50);
-        
-        document.removeEventListener('mousemove', handleMove);
-        document.removeEventListener('mouseup', handleUp);
+      try { chrome.storage.onChanged.addListener(this.storageListener); } catch { /* Unavailable after extension reload. */ }
+      this.offerLegacyImport();
+      this.placeButton();
+      this.update();
+    }
+
+    button(text, label, handler, className = 'jn-control') {
+      const button = el('button', className, text);
+      button.type = 'button';
+      button.setAttribute('aria-label', label);
+      button.title = label;
+      // Detached rows must be collectible; the lifetime signal is for global listeners.
+      button.addEventListener('click', handler);
+      return button;
+    }
+    createUI() {
+      document.getElementById(ROOT)?.remove();
+      this.root = el('div');
+      this.root.id = ROOT;
+      this.toggle = this.button('', 'Open message navigator (Ctrl or Command + Shift + M)', () => {
+        if (!this.suppressClick) this.isOpen ? this.close() : this.open();
+      }, 'jn-toggle');
+      this.handle = el('span', 'jn-drag', '⠿');
+      this.handle.title = 'Drag to reposition; double-click to reset';
+      this.handle.setAttribute('aria-hidden', 'true');
+      this.count = el('span', 'jn-count', '0');
+      this.toggle.append(this.handle, el('span', '', 'Messages'), this.count);
+      this.toggle.setAttribute('aria-expanded', 'false');
+      this.toggle.setAttribute('aria-controls', 'jn-panel');
+      this.panel = el('section', 'jn-panel');
+      this.panel.id = 'jn-panel';
+      this.panel.hidden = true;
+      this.panel.setAttribute('role', 'dialog');
+      this.panel.setAttribute('aria-label', 'Message navigator');
+      const header = el('div', 'jn-header');
+      const heading = el('div');
+      heading.append(el('h2', '', 'Your messages'), el('p', '', 'Find your place in the conversation'));
+      header.append(heading, this.button('×', 'Close navigator', () => this.close()));
+      const search = el('div', 'jn-search');
+      this.input = el('input');
+      this.input.type = 'search';
+      this.input.placeholder = 'Search full messages…';
+      this.input.setAttribute('aria-label', 'Search full messages');
+      this.input.autocomplete = 'off';
+      this.listen(this.input, 'input', () => { this.query = this.input.value; this.render(); });
+      search.append(this.input);
+      const toolbar = el('div', 'jn-toolbar');
+      this.filter = this.button('☆ Starred', 'Show starred messages only', () => {
+        this.onlyStarred = !this.onlyStarred;
+        this.render();
+      });
+      this.sort = this.button('Oldest first ↓', 'Reverse message order', () => {
+        this.newestFirst = !this.newestFirst;
+        this.render();
+        this.save();
+      });
+      toolbar.append(this.filter, this.sort);
+      this.toolbar = toolbar;
+      this.results = el('div', 'jn-results');
+      this.results.setAttribute('aria-live', 'polite');
+      this.list = el('div', 'jn-list');
+      this.list.setAttribute('aria-label', 'Matching messages');
+      const footer = el('div', 'jn-footer');
+      footer.append(this.button('↑ First', 'Jump to first loaded message', () => this.jump(this.messages[0])),
+        this.button('↓ Latest', 'Jump to latest loaded message', () => this.jump(this.messages.at(-1))),
+        this.button('Copy results', 'Copy all matching full messages', () => this.copy(this.filtered().map((message) => `${message.index + 1}. ${message.text}`).join('\n\n'))));
+      this.help = el('p', 'jn-help', '↑ ↓ to browse · Enter to jump · Esc to close');
+      const reset = this.button('Reset position', 'Restore the navigator button position', () => this.resetPosition(), 'jn-reset');
+      this.status = el('div', 'jn-status');
+      this.status.setAttribute('role', 'status');
+      this.panel.append(header, search, toolbar, this.results, this.list, footer, this.help, reset, this.status);
+      this.root.append(this.toggle, this.panel);
+      document.body.append(this.root);
+      this.setupDrag();
+    }
+
+    readMessages() {
+      const occurrences = new Map();
+      return [...document.querySelectorAll(SELECTOR)].filter((node) => !this.root.contains(node)).map((node, index) => {
+        const content = node.querySelector('.whitespace-pre-wrap') || node;
+        const text = content.textContent.trim();
+        const digest = hash(text);
+        const occurrence = occurrences.get(digest) || 0;
+        occurrences.set(digest, occurrence + 1);
+        const id = node.getAttribute('data-message-id') || node.closest('[data-message-id]')?.getAttribute('data-message-id');
+        return { node, text, index, key: JSON.stringify([this.conversation, id || `${digest}:${occurrence}`]) };
+      }).filter((message) => message.text);
+    }
+    scan() {
+      const conversation = this.conversationKey();
+      const routeChanged = conversation !== this.conversation;
+      if (routeChanged) {
+        this.conversation = conversation;
+        this.query = '';
+        this.input.value = '';
+        this.onlyStarred = false;
+        this.status.textContent = '';
+      }
+      const messages = this.readMessages();
+      const changed = routeChanged || messages.length !== this.messages.length || messages.some((message, i) =>
+        message.text !== this.messages[i]?.text || message.key !== this.messages[i]?.key);
+      this.messages = messages; // React may replace DOM nodes without changing their text.
+      if (changed) this.update();
+    }
+    update() {
+      this.count.textContent = this.messages.length;
+      if (this.isOpen) this.render();
+    }
+    filtered() {
+      const terms = this.query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+      const messages = this.messages.filter((message) => (!this.onlyStarred || this.stars.has(message.key)) &&
+        terms.every((term) => message.text.toLocaleLowerCase().includes(term)));
+      return this.newestFirst ? messages.reverse() : messages;
+    }
+    render() {
+      const focus = document.activeElement;
+      const focusedKey = focus?.closest('.jn-item')?.dataset.key;
+      const focusedAction = focus?.dataset.action;
+      const scrollTop = this.list.scrollTop;
+      this.list.replaceChildren();
+      this.filter.setAttribute('aria-pressed', String(this.onlyStarred));
+      this.sort.textContent = this.newestFirst ? 'Newest first ↑' : 'Oldest first ↓';
+      const messages = this.filtered();
+      this.results.textContent = `${messages.length} of ${this.messages.length} loaded messages`;
+      if (!messages.length) {
+        const empty = el('div', 'jn-empty');
+        empty.append(el('strong', '', this.messages.length ? 'No matching messages' : 'No messages loaded yet'),
+          el('p', '', this.messages.length ? 'Try another search or turn off the starred filter.' : 'Open a conversation or send a message to get started.'));
+        this.list.append(empty);
+      }
+      const fragment = document.createDocumentFragment();
+      messages.forEach((message) => {
+        const item = el('div', 'jn-item');
+        item.dataset.key = message.key;
+        const jump = this.button('', `Jump to message ${message.index + 1}: ${message.text.slice(0, 160)}`, () => this.jump(message), 'jn-jump');
+        jump.dataset.action = 'jump';
+        jump.append(el('span', 'jn-number', String(message.index + 1).padStart(2, '0')), el('span', 'jn-preview', this.preview(message.text)));
+        const starred = this.stars.has(message.key);
+        const star = this.button(starred ? '★' : '☆', `${starred ? 'Unstar' : 'Star'} message ${message.index + 1}`, () => {
+          if (!this.storageReady) return;
+          const enabled = !this.stars.has(message.key);
+          enabled ? this.stars.add(message.key) : this.stars.delete(message.key);
+          this.saveStar(message.key, enabled);
+          this.render();
+        }, 'jn-star');
+        star.dataset.action = 'star';
+        star.setAttribute('aria-pressed', String(starred));
+        const copy = this.button('⧉', `Copy message ${message.index + 1}`, () => this.copy(message.text), 'jn-copy');
+        copy.dataset.action = 'copy';
+        item.append(jump, star, copy);
+        item.addEventListener('contextmenu', (event) => { event.preventDefault(); this.copy(message.text); });
+        fragment.append(item);
+      });
+      this.list.append(fragment);
+      this.list.scrollTop = scrollTop;
+      if (focusedKey) {
+        const item = [...this.list.children].find((node) => node.dataset.key === focusedKey);
+        ([...(item?.querySelectorAll('button') || [])].find((button) => button.dataset.action === focusedAction) || this.input).focus({ preventScroll: true });
+      }
+      this.placePanel();
+    }
+    preview(text) {
+      const term = this.query.trim().split(/\s+/)[0];
+      const match = term ? text.toLocaleLowerCase().indexOf(term.toLocaleLowerCase()) : 0;
+      const start = Math.max(0, match - 40);
+      const snippet = text.slice(start, start + 180).replace(/\s+/g, ' ');
+      return `${start ? '…' : ''}${snippet}${start + 180 < text.length ? '…' : ''}`;
+    }
+    open() {
+      this.previousFocus = document.activeElement;
+      this.isOpen = true;
+      this.panel.hidden = false;
+      this.toggle.setAttribute('aria-expanded', 'true');
+      this.scan();
+      this.render();
+      this.input.focus();
+    }
+    close(restoreFocus = true) {
+      this.isOpen = false;
+      this.panel.hidden = true;
+      this.toggle.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) (this.previousFocus?.isConnected ? this.previousFocus : this.toggle).focus({ preventScroll: true });
+    }
+    jump(message) {
+      if (!message) { this.notify('No message available.'); return; }
+      this.scan();
+      const current = this.messages.find((entry) => entry.key === message.key);
+      if (!current?.node.isConnected) { this.notify('This message is no longer loaded.'); return; }
+      current.node.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'center' });
+      this.clearHighlight();
+      this.highlight = current.node;
+      this.highlight.classList.add('jn-message-highlight');
+      this.highlightTimer = setTimeout(() => this.clearHighlight(), 2200);
+      this.close();
+    }
+    clearHighlight() {
+      clearTimeout(this.highlightTimer);
+      this.highlight?.classList.remove('jn-message-highlight');
+      this.highlight = null;
+    }
+    onKey(event) {
+      if (event.isComposing) return;
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'm') {
+        event.preventDefault();
+        if (!event.repeat) this.isOpen ? this.close() : this.open();
+        return;
+      }
+      if (!this.isOpen) return;
+      if (event.key === 'Escape') { event.preventDefault(); this.close(); return; }
+      if (!this.panel.contains(event.target)) return;
+      const jumps = [...this.list.querySelectorAll('.jn-jump')];
+      const current = jumps.indexOf(event.target);
+      if (['ArrowDown', 'ArrowUp'].includes(event.key) && (event.target === this.input || current >= 0)) {
+        event.preventDefault();
+        const next = current < 0 ? (event.key === 'ArrowDown' ? 0 : jumps.length - 1) : clamp(current + (event.key === 'ArrowDown' ? 1 : -1), 0, jumps.length - 1);
+        jumps[next]?.focus();
+      } else if (event.key === 'Enter' && event.target === this.input) {
+        event.preventDefault();
+        jumps[0]?.click();
+      }
+    }
+    placeButton() {
+      if (!this.position) return;
+      this.position = { left: clamp(this.position.left, 8, innerWidth - this.toggle.offsetWidth - 8),
+        top: clamp(this.position.top, 8, innerHeight - this.toggle.offsetHeight - 8) };
+      Object.assign(this.toggle.style, { left: `${this.position.left}px`, top: `${this.position.top}px`, right: 'auto' });
+    }
+    placePanel() {
+      if (!this.isOpen) return;
+      const button = this.toggle.getBoundingClientRect();
+      this.panel.style.maxHeight = `${Math.min(560, innerHeight - 24)}px`;
+      const panel = this.panel.getBoundingClientRect();
+      const below = button.bottom + 8;
+      const top = below + panel.height <= innerHeight - 12 ? below : button.top - panel.height - 8;
+      Object.assign(this.panel.style, { left: `${clamp(button.right - panel.width, 12, innerWidth - panel.width - 12)}px`,
+        top: `${clamp(top, 12, innerHeight - panel.height - 12)}px` });
+    }
+    setupDrag() {
+      this.listen(this.handle, 'pointerdown', (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const rect = this.toggle.getBoundingClientRect();
+        this.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+        this.handle.setPointerCapture(event.pointerId);
+      });
+      this.listen(this.handle, 'pointermove', (event) => {
+        if (!this.drag || this.drag.id !== event.pointerId) return;
+        const dx = event.clientX - this.drag.x, dy = event.clientY - this.drag.y;
+        if (!this.drag.moved && Math.hypot(dx, dy) < 5) return;
+        this.drag.moved = true;
+        this.suppressClick = true;
+        this.position = { left: this.drag.left + dx, top: this.drag.top + dy };
+        this.placeButton();
+        this.placePanel();
+      });
+      const finish = () => {
+        if (!this.drag) return;
+        if (this.drag.moved) this.save();
+        this.drag = null;
+        clearTimeout(this.dragTimer);
+        this.dragTimer = setTimeout(() => { this.suppressClick = false; }, 0);
       };
-      
-      document.addEventListener('mousemove', handleMove);
-      document.addEventListener('mouseup', handleUp);
-    });
-  }
-
-  // Keyboard shortcuts
-  setupKeyboardShortcuts() {
-    document.addEventListener('keydown', (e) => {
-      // Ctrl+Shift+M or Cmd+Shift+M to toggle dropdown
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'M') {
-        e.preventDefault();
-        this.toggleDropdown();
+      this.listen(this.handle, 'pointerup', finish);
+      this.listen(this.handle, 'pointercancel', finish);
+      this.listen(this.handle, 'lostpointercapture', finish);
+      this.listen(this.handle, 'dblclick', (event) => {
+        event.preventDefault();
+        this.resetPosition();
+      });
+    }
+    resetPosition() {
+      this.position = null;
+      this.toggle.removeAttribute('style');
+      this.placePanel();
+      this.save();
+    }
+    offerLegacyImport() {
+      // Old versions saved full prompts in page storage. Import only on an explicit click.
+      try {
+        const saved = JSON.parse(localStorage.getItem('chatgpt-nav-starred') || '[]');
+        if (!Array.isArray(saved) || !saved.some((value) => typeof value === 'string')) return;
+        this.legacyStars = new Set(saved.filter((value) => typeof value === 'string'));
+        this.toolbar.append(this.button('Import old stars', 'Import old bookmarks matching this conversation', () => {
+          let count = 0;
+          for (const message of this.messages) {
+            if (this.legacyStars.has(message.text) && !this.stars.has(message.key)) {
+              this.stars.add(message.key);
+              this.saveStar(message.key, true);
+              count++;
+            }
+          }
+          this.render();
+          this.notify(`Imported ${count} bookmarks from the loaded conversation.`);
+        }));
+      } catch { /* Corrupt or inaccessible legacy storage must never prevent startup. */ }
+    }
+    async copy(text) {
+      if (!text) { this.notify('No matching messages to copy.'); return; }
+      try { await navigator.clipboard.writeText(text); this.notify('Copied to clipboard.'); }
+      catch { this.notify('Could not copy. Check clipboard access and try again.'); }
+    }
+    notify(text) { this.status.textContent = text; }
+    save() {
+      if (!this.storageReady) return;
+      const value = { position: this.position, newestFirst: this.newestFirst };
+      this.saveQueue = this.saveQueue.then(() => chrome.storage.local.set({ [STORAGE]: value })).catch(() => {
+        this.notify('Could not save settings. Changes will last for this tab only.');
+      });
+    }
+    saveStar(key, enabled) {
+      // Independent keys prevent one tab from overwriting another conversation's stars.
+      this.saveQueue = this.saveQueue.then(() => enabled
+        ? chrome.storage.local.set({ [STAR_PREFIX + key]: true })
+        : chrome.storage.local.remove(STAR_PREFIX + key)).catch(() => {
+        this.notify('Could not save bookmark. It will last for this tab only.');
+      });
+    }
+    destroy() {
+      this.events.abort();
+      this.observer?.disconnect();
+      if (this.storageListener) {
+        try { chrome.storage.onChanged.removeListener(this.storageListener); } catch { /* Extension was reloaded. */ }
       }
-      
-      // When dropdown is open
-      if (this.isOpen) {
-        // Escape to close
-        if (e.key === 'Escape') {
-          this.toggleDropdown();
-        }
-        
-        // Focus search with /
-        if (e.key === '/' && e.target.id !== 'chatgpt-nav-search-input') {
-          e.preventDefault();
-          document.getElementById('chatgpt-nav-search-input')?.focus();
-        }
-      }
-    });
+      clearInterval(this.routeTimer);
+      clearTimeout(this.scanTimer);
+      clearTimeout(this.dragTimer);
+      this.clearHighlight();
+      this.root?.remove();
+    }
   }
-
-  // Local storage helpers
-  saveStarredMessages() {
-    localStorage.setItem('chatgpt-nav-starred', JSON.stringify(this.starredMessages));
-  }
-
-  loadStarredMessages() {
-    const saved = localStorage.getItem('chatgpt-nav-starred');
-    return saved ? JSON.parse(saved) : [];
-  }
-
-  saveButtonPosition() {
-    const rect = this.toggleButton.getBoundingClientRect();
-    const position = {
-      top: rect.top,
-      left: rect.left
-    };
-    localStorage.setItem('chatgpt-nav-button-position', JSON.stringify(position));
-  }
-
-  loadButtonPosition() {
-    const saved = localStorage.getItem('chatgpt-nav-button-position');
-    return saved ? JSON.parse(saved) : null;
-  }
-}
-
-// Initialize the navigator when the page loads
-if (window.location.hostname.includes('openai.com') || window.location.hostname.includes('chatgpt.com')) {
-  new ChatGPTNavigator();
-}
+  window.chatGPTNavigatorInstance = new ChatGPTNavigator();
+})();

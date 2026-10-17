@@ -1,0 +1,7 @@
+{
+  "name": "chatgpt-jump-navigator",
+  "version": "3.0.0",
+  "private": true,
+  "scripts": { "test": "node tests/navigator.cjs", "check": "node --check content.js" },
+  "devDependencies": { "playwright": "^1.62.1" }
+}

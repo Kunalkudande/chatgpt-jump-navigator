@@ -1,13 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Navigation Dropdown",
-  "version": "2.0.0",
-  "description": "Quick navigation dropdown for long ChatGPT conversations. Jump to any of your messages instantly.",
-  "permissions": [],
-  "host_permissions": [
-    "https://chat.openai.com/*",
-    "https://chatgpt.com/*"
-  ],
+  "name": "ChatGPT Jump Navigator",
+  "version": "3.0.0",
+  "description": "Navigate long ChatGPT conversations instantly. Search, star, and jump to your messages with keyboard shortcuts.",
+  "permissions": ["storage"],
   "content_scripts": [
     {
       "matches": [
@@ -18,5 +14,7 @@
       "css": ["styles.css"],
       "run_at": "document_end"
     }
-  ]
+  ],
+  "author": "Kunalkudande",
+  "homepage_url": "https://github.com/Kunalkudande/chatgpt-jump-navigator"
 }
