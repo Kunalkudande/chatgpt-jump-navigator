@@ -200,6 +200,12 @@ assert.deepEqual(manifest.permissions, ['storage']);
     await input.fill('does-not-exist');
     await page.evaluate(() => history.pushState({}, '', '/c/url-only'));
     await page.waitForFunction(() => document.querySelector('input[type="search"]').value === '');
+    assert.equal(await items.count(), 0, 'old conversation rows disappear before the new DOM is ready');
+    await page.evaluate(() => {
+      const main = document.querySelector('main');
+      const replacement = main.cloneNode(true); main.replaceWith(replacement);
+    });
+    await page.waitForFunction(() => document.querySelectorAll('.jn-item').length === 251);
     // UI repairs itself if the SPA removes it.
     await page.evaluate(() => document.getElementById('chatgpt-jump-navigator').remove());
     await page.waitForSelector('.jn-toggle');
@@ -215,7 +221,117 @@ assert.deepEqual(manifest.permissions, ['storage']);
     assert.equal(await toggle.count(), 1);
     await toggle.click();
     assert.match(await page.locator('.jn-status').innerText(), /Saved settings are unavailable/);
+    // Reproduce the zero-message failure with user-turn markup and no author-role attribute.
+    await page.evaluate(() => {
+      const main = document.querySelector('main');
+      main.innerHTML = `
+        <article data-testid="conversation-turn-0" data-turn="user" data-turn-id="turn-only">
+          <h5 class="sr-only">You said:</h5><div class="user-message-bubble-color"><div class="whitespace-pre-wrap">Give me this</div></div>
+          <button>Copy</button><button>Edit</button>
+        </article>
+        <article data-testid="conversation-turn-1" data-turn="assistant"><div class="user-message-bubble-color">Assistant output must not become a user prompt</div></article>
+        <article data-testid="conversation-turn-2" data-turn="user">
+          <div data-message-author-role="user" data-message-id="nested-message"><div class="user-message-bubble-color"><div class="whitespace-pre-wrap">Nested user prompt</div></div></div>
+        </article>
+        <article data-testid="conversation-turn-3"><div class="user-message-bubble-color"><div class="whitespace-pre-wrap">Bubble-only prompt</div></div></article>
+        <article data-turn-role="user" data-message-id="chunks"><div class="whitespace-pre-wrap">First paragraph</div><div class="whitespace-pre-wrap">Second paragraph</div><button>Edit</button></article>
+        <article data-testid="user-message" data-message-id="test-id"><span>Test ID user prompt</span><button>Copy</button></article>
+        <article hidden data-turn="user"><div class="user-message-bubble-color">Hidden duplicate</div></article>
+        <article data-turn="user"><span> </span><button>Copy</button></article>
+      `;
+      const sidebar = document.createElement('aside');
+      sidebar.innerHTML = '<div class="user-message-bubble-color">Sidebar chat title</div><div data-turn="user">Sidebar fake user</div>';
+      document.body.append(sidebar);
+      window.chatGPTNavigatorInstance.query = '';
+      window.chatGPTNavigatorInstance.input.value = '';
+    });
+    await page.waitForFunction(() => document.querySelector('.jn-count').textContent === '5');
+    const extracted = await page.evaluate(() => window.chatGPTNavigatorInstance.messages.map(({ text, index }) => ({ text, index })));
+    assert.deepEqual(extracted, [
+      { text: 'Give me this', index: 0 }, { text: 'Nested user prompt', index: 1 },
+      { text: 'Bubble-only prompt', index: 2 }, { text: 'First paragraph\n\nSecond paragraph', index: 3 },
+      { text: 'Test ID user prompt', index: 4 }
+    ], 'supports alternate layouts without duplicate rows, assistant replies, controls, empty turns or sidebar content');
+    const nestedKey = await page.evaluate(() => window.chatGPTNavigatorInstance.messages[1].key);
+    await page.evaluate(() => document.querySelector('[data-message-author-role="user"]').removeAttribute('data-message-author-role'));
+    await page.waitForTimeout(220);
+    assert.equal(await page.locator('[data-message-author-role="user"]').count(), 0, 'fixture now has no legacy author-role marker at all');
+    assert.equal(await page.locator('.jn-count').innerText(), '5');
+    assert.equal(await page.evaluate(() => window.chatGPTNavigatorInstance.messages[1].key), nestedKey, 'bookmark identity survives wrapper changes');
+    await page.getByRole('button', { name: 'Jump to message 1: Give me this', exact: true }).click();
+    assert.equal(await page.locator('.jn-message-highlight').getAttribute('data-turn-id'), 'turn-only');
+    await toggle.click();
+    // React can add the user marker or bubble class after a turn's text already exists.
+    await page.evaluate(() => {
+      const turn = document.createElement('article'); turn.dataset.testid = 'conversation-turn-8'; turn.id = 'delayed'; turn.textContent = 'Delayed user classification';
+      document.querySelector('main').append(turn);
+    });
+    await page.waitForTimeout(220);
+    assert.equal(await page.locator('.jn-count').innerText(), '5');
+    await page.evaluate(() => document.querySelector('#delayed').setAttribute('data-turn', 'user'));
+    await page.waitForFunction(() => document.querySelector('.jn-count').textContent === '6');
+    await input.fill('Updated bubble text');
+    await page.evaluate(() => document.querySelector('[data-testid="conversation-turn-3"] .whitespace-pre-wrap').firstChild.data = 'Updated bubble text');
+    await page.waitForFunction(() => document.querySelectorAll('.jn-item').length === 1);
+    await input.fill('');
+    await page.evaluate(() => document.querySelector('#delayed').remove());
+    await page.waitForFunction(() => document.querySelector('.jn-count').textContent === '5');
+    // A rescan is available, and diagnostic exports contain counts only.
+    await page.getByRole('button', { name: 'Rescan loaded conversation messages' }).click();
+    assert.match(await page.locator('.jn-status').innerText(), /Found 5/);
+    await page.evaluate(() => {
+      document.querySelector('main').replaceChildren();
+      window.failClipboard = false;
+    });
+    await page.waitForFunction(() => document.querySelector('.jn-count').textContent === '0');
+    await page.getByRole('button', { name: 'Copy detection counts without conversation text' }).click();
+    const diagnosticText = await page.evaluate(() => window.copied);
+    assert.equal(JSON.parse(diagnosticText).detectedUserMessages, 0);
+    assert.doesNotMatch(diagnosticText, /Give me this|Sidebar|\/c\//);
+    // Actual renderer shown in the user's Elements screenshot: no legacy markers or turn articles.
+    await page.evaluate(() => {
+      document.querySelector('main').innerHTML = `
+        <div class="w-full" data-content-search-unit-key="fallback-turn-1:0:user">
+          <div class="group/user-message flex w-full flex-col gap-1 items-end">
+            <div data-user-message-bubble="true" class="bg-user-message text-user-message min-w-0 overflow-hidden break-words rounded-2xl relative text-start">
+              <button aria-label="Copy prompt">Copy</button>
+              <div class="flex flex-col items-end gap-1">
+                <div class="relative w-full min-w-0 text-size-chat leading-relaxed">
+                  <div data-search-result-target><div><div class="text-size-chat whitespace-pre-wrap" dir="auto">Build a website for my spare parts shop.</div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div data-content-search-unit-key="fallback-turn-2:0:assistant"><div class="whitespace-pre-wrap">Assistant reply should not be listed.</div></div>
+      `;
+    });
+    await page.waitForFunction(() => document.querySelector('.jn-count').textContent === '1');
+    assert.equal(await page.locator('main').locator('[data-message-author-role="user"], [data-turn="user"], [data-turn-role="user"], [data-testid="user-message"], .user-message-bubble-color').count(), 0, 'conversation contains none of the v3.0.1 markers');
+    assert.deepEqual(await page.evaluate(() => window.chatGPTNavigatorInstance.messages.map((message) => message.text)), ['Build a website for my spare parts shop.']);
+    assert.equal(await page.evaluate(() => window.chatGPTNavigatorInstance.diagnostics().userBubbleAttributeMarkers), 1);
+    await input.fill('spare parts');
+    assert.equal(await items.count(), 1);
+    await page.getByRole('button', { name: 'Copy message 1', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.copied), 'Build a website for my spare parts shop.');
+    await page.locator('.jn-jump').click();
+    assert.equal(await page.locator('[data-user-message-bubble="true"].jn-message-highlight').count(), 1);
+    await toggle.click();
+    await input.fill('');
+    await page.evaluate(() => document.querySelector('[data-user-message-bubble] .whitespace-pre-wrap').firstChild.data = 'Updated spare parts shop prompt.');
+    await page.waitForFunction(() => document.querySelector('.jn-preview').textContent.includes('Updated spare parts'));
+    await page.evaluate(() => {
+      const wrapper = document.createElement('div'); wrapper.id = 'new-bubble';
+      wrapper.innerHTML = '<div class="bg-user-message"><div class="whitespace-pre-wrap">A newly classified prompt.</div></div>';
+      document.querySelector('main').append(wrapper);
+    });
+    await page.waitForTimeout(220);
+    assert.equal(await page.locator('.jn-count').innerText(), '1', 'styling alone is not a user marker');
+    await page.evaluate(() => document.querySelector('#new-bubble > div').setAttribute('data-user-message-bubble', 'true'));
+    await page.waitForFunction(() => document.querySelector('.jn-count').textContent === '2');
+    await page.evaluate(() => document.querySelector('#new-bubble > div').setAttribute('data-user-message-bubble', 'false'));
+    await page.waitForFunction(() => document.querySelector('.jn-count').textContent === '1');
     assert.deepEqual(errors, []);
-    console.log('PASS: browser regression checks, storage/clipboard failures, route changes, keyboard navigation, CSS isolation and responsive layouts.');
+    console.log('PASS: browser regression checks, alternate user-turn/bubble layouts, duplicate prevention, delayed markers, diagnostics, storage/clipboard failures, route changes, keyboard navigation, CSS isolation and responsive layouts.');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

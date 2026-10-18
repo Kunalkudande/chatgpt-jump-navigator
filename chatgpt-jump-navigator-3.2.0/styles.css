@@ -1,0 +1,75 @@
+/* Scope UI rules so ChatGPT's buttons, tooltips and scrollbars stay intact. */
+#chatgpt-jump-navigator {
+  --jn-bg: #fff; --jn-surface: #f5f7f7; --jn-text: #182b28;
+  --jn-muted: #5b6e69; --jn-border: #dce5e2; --jn-accent: #087b61; --jn-hover: #edf7f3;
+  color: var(--jn-text); font: 13px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  #chatgpt-jump-navigator {
+    --jn-bg: #202523; --jn-surface: #2a302e; --jn-text: #eef5f1;
+    --jn-muted: #a6b8af; --jn-border: #404b46; --jn-accent: #6bddb6; --jn-hover: #293f35; color-scheme: dark;
+  }
+}
+html.dark #chatgpt-jump-navigator, html[data-theme="dark"] #chatgpt-jump-navigator {
+  --jn-bg: #202523; --jn-surface: #2a302e; --jn-text: #eef5f1;
+  --jn-muted: #a6b8af; --jn-border: #404b46; --jn-accent: #6bddb6; --jn-hover: #293f35; color-scheme: dark;
+}
+html.light #chatgpt-jump-navigator, html[data-theme="light"] #chatgpt-jump-navigator {
+  --jn-bg: #fff; --jn-surface: #f5f7f7; --jn-text: #182b28;
+  --jn-muted: #5b6e69; --jn-border: #dce5e2; --jn-accent: #087b61; --jn-hover: #edf7f3; color-scheme: light;
+}
+#chatgpt-jump-navigator *, #chatgpt-jump-navigator *::before, #chatgpt-jump-navigator *::after { box-sizing: border-box; }
+#chatgpt-jump-navigator [hidden] { display: none !important; }
+#chatgpt-jump-navigator button, #chatgpt-jump-navigator input { font: inherit; }
+#chatgpt-jump-navigator button { cursor: pointer; }
+#chatgpt-jump-navigator button:focus-visible, #chatgpt-jump-navigator input:focus-visible { outline: 2px solid var(--jn-accent); outline-offset: 2px; }
+#chatgpt-jump-navigator .jn-toggle {
+  position: fixed; top: 76px; right: 20px; z-index: 2147483646;
+  display: flex; align-items: center; gap: 9px; max-width: calc(100vw - 16px);
+  padding: 10px 14px 10px 8px; border: 1px solid #087b61; border-radius: 24px;
+  background: #087b61; color: #fff; font-weight: 600; box-shadow: 0 4px 16px #0002; user-select: none;
+}
+#chatgpt-jump-navigator .jn-toggle:hover { background: #066650; }
+#chatgpt-jump-navigator .jn-count { padding: 1px 7px; border-radius: 12px; background: #ffffff26; font-size: 11px; }
+#chatgpt-jump-navigator .jn-drag { cursor: grab; touch-action: none; padding: 1px 4px; font-size: 20px; line-height: 1; }
+#chatgpt-jump-navigator .jn-drag:active { cursor: grabbing; }
+#chatgpt-jump-navigator .jn-panel {
+  position: fixed; z-index: 2147483647; width: min(390px, calc(100vw - 24px));
+  display: flex; flex-direction: column; overflow: hidden; background: var(--jn-bg); color: var(--jn-text);
+  border: 1px solid var(--jn-border); border-radius: 16px; box-shadow: 0 16px 64px #0003, 0 3px 10px #0001;
+}
+#chatgpt-jump-navigator .jn-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px 12px; }
+#chatgpt-jump-navigator h2 { font: 650 17px/1.4 system-ui, sans-serif; margin: 0; color: var(--jn-text); }
+#chatgpt-jump-navigator p { margin: 3px 0 0; color: var(--jn-muted); font-size: 12px; }
+#chatgpt-jump-navigator .jn-control { border: 1px solid var(--jn-border); border-radius: 8px; background: var(--jn-bg); color: var(--jn-text); padding: 6px 9px; min-height: 32px; }
+#chatgpt-jump-navigator .jn-header .jn-control { border: none; font-size: 24px; padding: 0 8px; }
+#chatgpt-jump-navigator .jn-control:hover { background: var(--jn-hover); }
+#chatgpt-jump-navigator .jn-control[aria-pressed="true"] { background: var(--jn-hover); color: var(--jn-accent); border-color: var(--jn-accent); }
+#chatgpt-jump-navigator .jn-search { padding: 0 16px; }
+#chatgpt-jump-navigator input { display: block; width: 100%; border: 1px solid var(--jn-border); background: var(--jn-surface); color: var(--jn-text); border-radius: 9px; padding: 10px 12px; }
+#chatgpt-jump-navigator input::placeholder { color: var(--jn-muted); opacity: 1; }
+#chatgpt-jump-navigator .jn-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 16px 6px; }
+#chatgpt-jump-navigator .jn-results { padding: 4px 18px 8px; font-size: 11px; color: var(--jn-muted); }
+#chatgpt-jump-navigator .jn-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 10px 10px; scrollbar-width: thin; scrollbar-color: var(--jn-border) transparent; }
+#chatgpt-jump-navigator .jn-item { display: flex; align-items: center; gap: 2px; border: 1px solid var(--jn-border); border-radius: 10px; margin: 0 0 7px; }
+#chatgpt-jump-navigator .jn-item:hover, #chatgpt-jump-navigator .jn-item:focus-within { background: var(--jn-hover); border-color: var(--jn-accent); }
+#chatgpt-jump-navigator .jn-jump { display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0; text-align: left; background: transparent; color: var(--jn-text); border: none; border-radius: 9px; padding: 12px 6px 12px 10px; }
+#chatgpt-jump-navigator .jn-number { color: var(--jn-accent); font-size: 11px; font-weight: 700; padding-top: 2px; }
+#chatgpt-jump-navigator .jn-preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+#chatgpt-jump-navigator .jn-star, #chatgpt-jump-navigator .jn-copy { padding: 6px; min-width: 30px; min-height: 32px; border: none; border-radius: 6px; background: transparent; color: var(--jn-muted); }
+#chatgpt-jump-navigator .jn-star { font-size: 21px; }
+#chatgpt-jump-navigator .jn-star[aria-pressed="true"] { color: var(--jn-accent); }
+#chatgpt-jump-navigator .jn-star:hover, #chatgpt-jump-navigator .jn-copy:hover { background: var(--jn-surface); color: var(--jn-accent); }
+#chatgpt-jump-navigator .jn-empty { padding: 30px 18px; text-align: center; }
+#chatgpt-jump-navigator .jn-empty strong { font-size: 15px; }
+#chatgpt-jump-navigator .jn-footer { display: flex; justify-content: space-between; gap: 5px; padding: 10px 12px; border-top: 1px solid var(--jn-border); }
+#chatgpt-jump-navigator .jn-footer .jn-control { font-size: 12px; }
+#chatgpt-jump-navigator .jn-help { text-align: center; padding: 0 8px 10px; margin: 0; font-size: 11px; }
+#chatgpt-jump-navigator .jn-reset { color: var(--jn-muted); background: none; border: 0; padding: 0 8px 8px; font-size: 11px; }
+#chatgpt-jump-navigator .jn-status:not(:empty) { padding: 8px 14px; background: var(--jn-hover); color: var(--jn-text); font-size: 12px; }
+.jn-message-highlight { outline: 3px solid #10a37f !important; outline-offset: 5px !important; border-radius: 8px; }
+@media (max-height: 400px) {
+  #chatgpt-jump-navigator .jn-header { padding: 6px 12px; }
+  #chatgpt-jump-navigator .jn-header p, #chatgpt-jump-navigator .jn-help { display: none; }
+  #chatgpt-jump-navigator .jn-toolbar { padding-top: 6px; }
+}

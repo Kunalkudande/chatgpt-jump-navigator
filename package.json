@@ -1,7 +1,7 @@
 {
   "name": "chatgpt-jump-navigator",
-  "version": "3.0.0",
+  "version": "3.2.0",
   "private": true,
-  "scripts": { "test": "node tests/navigator.cjs", "check": "node --check content.js" },
-  "devDependencies": { "playwright": "^1.62.1" }
+  "scripts": { "test": "node tests/navigator.cjs && node tests/navigation.cjs && node tests/pagination.cjs", "test:install": "node tests/extension-smoke.cjs", "build:store-assets": "node tools/build-store-assets.cjs", "check": "node --check content.js" },
+  "devDependencies": { "playwright": "^1.62.1", "sharp": "^0.35.5" }
 }
